@@ -346,7 +346,7 @@ for (region_i in unique(d_AgrArea_reg$zone)){
            zone = region_i,
            var = "AgrArea_prop")
     
-  # AgrArea -------------------------------------------------------------------------.
+  # AgrArea --------------------------------------------------------------------.
   target_AgrArea <- d_AgrArea_reg %>% 
     filter(zone == region_i)
   
@@ -455,7 +455,7 @@ for (region_i in unique(d_AgrArea_reg$zone)){
   
   for (i in 1:(50/timestep)){
     
-    # AgrArea_prop ------------------------------------------------------------------.
+    # AgrArea_prop -------------------------------------------------------------.
     
     # change
     change_mean <- mean(pred_AgrArea_prop[, i * timestep + 1] - pred_AgrArea_prop[, (i-1) * timestep + 1])
@@ -488,7 +488,7 @@ for (region_i in unique(d_AgrArea_reg$zone)){
       bind_rows(d_as_gam_smry, .)
     
 
-    # IAR -------------------------------------------------------------------.
+    # IAR ----------------------------------------------------------------------.
     
     # change
     change_mean <- mean(pred_IAR[, i * timestep + 1] - pred_IAR[, (i-1) * timestep + 1])

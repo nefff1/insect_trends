@@ -22,7 +22,8 @@ options(mc.cores = 4)
 
 extract <- rstan::extract
 
-# climatic niche ---------------------------------------------------------------.
+# temperature niche ------------------------------------------------------------.
+# Output of R_Temperature_niche.R
 
 d_temperature_niche_butter <- readRDS("Data/d_temperature_niche_butterflies.rds")
 d_temperature_niche_odo <- readRDS("Data/d_temperature_niche_dragonflies.rds")
@@ -36,6 +37,8 @@ d_temperature_niche <- d_temperature_niche_butter %>%
               mutate(group = "grasshoppers"))
 
 # specialisation ---------------------------------------------------------------.
+# Raw data available from http://www.cscf.ch/cscf/de/home/projekte/fauna-indicativa.html
+# Processed data available from supplementary material
 
 d_spec <- readRDS("Data/habitat_spec_faunind.rds")
 
@@ -50,6 +53,7 @@ d_spec <- d_spec %>%
   ungroup()
 
 # Records data -----------------------------------------------------------------.
+# data are protected and are not available due to data privacy laws 
 
 d_records_butter <- fread("Data/d_records_butterflies.csv")
 d_records_odo <- fread("Data/d_records_dragonflies.csv")
@@ -62,12 +66,15 @@ d_records <- d_records_butter %>%
             d_records_ortho %>% 
               mutate(group = "grasshoppers"))
 
-# species list -----------------------------------------------------------------.
+# species lists ----------------------------------------------------------------.
 v_splist <- fread("Other/specieslist.txt") %>% 
   select(species, group) %>% 
   deframe()
 
+sel_agricultural_species <- readLines("Other/Agricultural_species.txt")
+
 # proportion of distribution in CH ---------------------------------------------.
+# Output of R_Proportion_Switzerland.R
 
 d_prop_ch_butter <- readRDS("Data/d_prop_ch_butterflies.rds")
 d_prop_ch_ortho <- readRDS("Data/d_prop_ch_grasshoppers.rds")
@@ -82,6 +89,7 @@ d_prop_ch <- d_prop_ch_butter %>%
   mutate(group = factor(group, levels = names(v_col_groups)))
 
 # bigeographic regions and elevation classes -----------------------------------.
+# Raw data available from https://data.geo.admin.ch (ch.bafu.biogeographische_regionen, ch.swisstopo.swissalti3d)
 
 d_zone <- fread('Data/d_zone.csv')
 d_zone <- d_zone %>% 
@@ -96,10 +104,12 @@ d_zone <- d_zone %>%
                                               "SouthernAlps")))
 
 # mean occupancy values --------------------------------------------------------.
+# available from https://doi.org/10.16904/envidat.355
 
 d_occ_means <- fread("Data/occ_means.csv")
 
 # climate change variables -----------------------------------------------------.
+# Output of R_Climate_change.R
 
 d_climate_lm_smry <- readRDS("Data/d_climate_lm_smry_5.rds")
 
@@ -113,6 +123,8 @@ d_climate_lm_smry <- d_climate_lm_smry %>%
   mutate(year_start = year_start_model + 5)
 
 # land-use change variables ----------------------------------------------------.
+# Output of R_Land_use_change.R
+
 d_as_gam_smry <- readRDS("Data/d_as_gam_smry_5.rds")
 
 # rearrange land use data
@@ -732,15 +744,197 @@ d_trend_comb <- d_trend_comb %>%
          zone = as.factor(zone),
          group = factor(group, levels = names(v_col_groups)))
 
-# run regression model #########################################################
+# data set only including "agricultural" species for regression model ##########
 ################################################################################.
+
+d_trend_comb_agrsp <- d_trend_comb %>% 
+  filter(species %in% sel_agricultural_species) %>% 
+  select(species, zone, year_start, trend_mean, trend_sd, group, elevation, 
+         sign_trend, trend_mean_sqrt, year_start_f)
+
+scaling_parameters_agrsp <- list(
+  trend_mean = list(mean = mean(d_trend_comb_agrsp$trend_mean),
+                    sd = sd(d_trend_comb_agrsp$trend_mean)),
+  trend_mean_sqrt = list(mean = mean(d_trend_comb_agrsp$trend_mean_sqrt),
+                         sd = sd(d_trend_comb_agrsp$trend_mean_sqrt)),
+  spec_index = list(mean = mean(d_spec$spec_index[d_spec$species %in% sel_agricultural_species]),
+                    sd = sd(d_spec$spec_index[d_spec$species %in% sel_agricultural_species])),
+  Tniche_mean = list(mean = mean(d_temperature_niche$Tniche_mean[d_temperature_niche$species %in% sel_agricultural_species]),
+                   sd = sd(d_temperature_niche$Tniche_mean[d_temperature_niche$species %in% sel_agricultural_species])),
+  T_all_change_mean = list(mean = mean(d_drivers$T_all_change_mean),
+                           sd = sd(d_drivers$T_all_change_mean)),
+  T_seas_change_mean = list(mean = mean(d_drivers$T_seas_change_mean),
+                            sd = sd(d_drivers$T_seas_change_mean)),
+  P_warmest_quarter_change_mean = list(mean = mean(d_drivers$P_warmest_quarter_change_mean),
+                                       sd = sd(d_drivers$P_warmest_quarter_change_mean)),
+  AgrArea_prop_change_mean = list(mean = mean(d_drivers$AgrArea_prop_change_mean),
+                             sd = sd(d_drivers$AgrArea_prop_change_mean)),
+  LSUGL_change_mean = list(mean = mean(d_drivers$LSUGL_change_mean),
+                           sd = sd(d_drivers$LSUGL_change_mean)),
+  IAR_change_mean = list(mean = mean(d_drivers$IAR_change_mean),
+                            sd = sd(d_drivers$IAR_change_mean))
+)
+
+
+# add predictor and scale data set
+d_trend_comb_agrsp_z <- d_trend_comb_agrsp %>% 
+  mutate(trend_mean = (trend_mean - scaling_parameters_agrsp$trend_mean$mean) /
+           scaling_parameters_agrsp$trend_mean$sd,
+         trend_sd = trend_sd / scaling_parameters_agrsp$trend_mean$sd,
+         trend_mean_sqrt = (trend_mean_sqrt - scaling_parameters_agrsp$trend_mean_sqrt$mean) /
+           scaling_parameters_agrsp$trend_mean_sqrt$sd) %>% 
+  left_join(d_spec %>% 
+              filter(species %in% sel_agricultural_species) %>% 
+              mutate(spec_index = (spec_index - scaling_parameters_agrsp$spec_index$mean) /
+                       scaling_parameters_agrsp$spec_index$sd), by = c("group", "species")) %>% 
+  left_join(d_temperature_niche %>% 
+              filter(species %in% sel_agricultural_species) %>% 
+              mutate(Tniche_mean = (Tniche_mean - scaling_parameters_agrsp$Tniche_mean$mean) /
+                       scaling_parameters_agrsp$Tniche_mean$sd), 
+            by = c("group", "species")) %>% 
+  left_join(d_drivers %>% 
+              mutate(T_all_change_mean = (T_all_change_mean - scaling_parameters_agrsp$T_all_change_mean$mean) /
+                       scaling_parameters_agrsp$T_all_change_mean$sd,
+                     T_seas_change_mean = (T_seas_change_mean - scaling_parameters_agrsp$T_seas_change_mean$mean) /
+                       scaling_parameters_agrsp$T_seas_change_mean$sd,
+                     P_warmest_quarter_change_mean = (P_warmest_quarter_change_mean - scaling_parameters_agrsp$P_warmest_quarter_change_mean$mean) /
+                       scaling_parameters_agrsp$P_warmest_quarter_change_mean$sd,
+                     AgrArea_prop_change_mean = (AgrArea_prop_change_mean - scaling_parameters_agrsp$AgrArea_prop_change_mean$mean) /
+                       scaling_parameters_agrsp$AgrArea_prop_change_mean$sd,
+                     LSUGL_change_mean = (LSUGL_change_mean - scaling_parameters_agrsp$LSUGL_change_mean$mean) /
+                       scaling_parameters_agrsp$LSUGL_change_mean$sd,
+                     IAR_change_mean = (IAR_change_mean - scaling_parameters_agrsp$IAR_change_mean$mean) /
+                       scaling_parameters_agrsp$IAR_change_mean$sd), 
+            by = c("zone", "year_start")) %>% 
+  mutate(species = as.factor(species),
+         zone = as.factor(zone),
+         group = factor(group, levels = names(v_col_groups)[1:2]))
+
+# add predictors
+d_trend_comb_agrsp <- d_trend_comb_agrsp %>% 
+  left_join(d_spec %>% 
+              filter(species %in% sel_agricultural_species),
+            by = c("group", "species")) %>% 
+  left_join(d_temperature_niche %>% 
+              filter(species %in% sel_agricultural_species),
+            by = c("group", "species")) %>%
+  left_join(d_drivers, by = c("zone", "year_start")) %>% 
+  mutate(species = as.factor(species),
+         zone = as.factor(zone),
+         group = factor(group, levels = names(v_col_groups)[1:2]))
+
+# run regression model (version 1) #############################################
+################################################################################.
+
+# restricted version (non-"agricultural" species excluded for some parameter estimates)
 
 d_trend_comb_z <- d_trend_comb_z %>% 
   arrange(zone, year_start_f, species) %>% 
   droplevels()
 
 # arrange data
-l_data <- list(
+l_data1 <- list(
+  N_obs = nrow(d_trend_comb_z),
+  N_obs_agrspec = nrow(d_trend_comb_z[d_trend_comb_z$species %in% sel_agricultural_species, ]),
+  N_spec = nlevels(d_trend_comb_z$species),
+  N_agrspec = n_distinct(d_trend_comb_z$species[d_trend_comb_z$species %in% sel_agricultural_species]),
+  N_reg = nlevels(d_trend_comb_z$zone),
+  N_int= nlevels(d_trend_comb_z$year_start_f),
+  N_group = nlevels(d_trend_comb_z$group),
+  
+  group = as.numeric(d_trend_comb_z$group),
+  spec = as.numeric(d_trend_comb_z$species),
+  spec_agrspec = as.numeric(droplevels(d_trend_comb_z$species[d_trend_comb_z$species %in% sel_agricultural_species])),
+  reg = as.numeric(d_trend_comb_z$zone),
+  
+  T_all = d_trend_comb_z$T_all_change_mean,
+  T_seas = d_trend_comb_z$T_seas_change_mean,
+  P = d_trend_comb_z$P_warmest_quarter_change_mean,
+  AgrArea_prop = d_trend_comb_z$AgrArea_prop_change_mean[d_trend_comb_z$species %in% sel_agricultural_species],
+  LSUGL = d_trend_comb_z$LSUGL_change_mean[d_trend_comb_z$species %in% sel_agricultural_species],
+  IAR = d_trend_comb_z$IAR_change_mean,
+  
+  Tniche = d_trend_comb_z$Tniche_mean,
+  spec_index = d_trend_comb_z$spec_index,
+  
+  elevation = as.numeric(d_trend_comb_z$elevation == "high"),
+  
+  year_start = model.matrix(~ year_start_f, data = d_trend_comb_z)[, -1],
+  
+  index_agrspec = which(d_trend_comb_z$species %in% sel_agricultural_species),
+  
+  y =  d_trend_comb_z$trend_mean_sqrt,
+  
+  y_mean = mean(d_trend_comb_z$trend_mean_sqrt)
+)
+
+
+
+# run model --------------------------------------------------------------------.
+set.seed(612)
+fit1 <- stan(file = "Stan_Code/Stan_regression_restricted.stan.stan",
+     data = l_data1,
+     chains = 4, iter = 2000)
+
+# run regression model (version 2) #############################################
+################################################################################.
+
+# only 276 "agricultural" species included
+
+d_trend_comb_agrsp_z <- d_trend_comb_agrsp_z %>% 
+  arrange(zone, year_start_f, species) %>% 
+  droplevels()
+
+# arrange data
+l_data2 <- list(
+  N_obs = nrow(d_trend_comb_agrsp_z),
+  N_spec = nlevels(d_trend_comb_agrsp_z$species),
+  N_reg = nlevels(d_trend_comb_agrsp_z$zone),
+  N_int= nlevels(d_trend_comb_agrsp_z$year_start_f),
+  N_group = nlevels(d_trend_comb_agrsp_z$group),
+  
+  group = as.numeric(d_trend_comb_agrsp_z$group),
+  spec = as.numeric(d_trend_comb_agrsp_z$species),
+  reg = as.numeric(d_trend_comb_agrsp_z$zone),
+  
+  T_all = d_trend_comb_agrsp_z$T_all_change_mean,
+  T_seas = d_trend_comb_agrsp_z$T_seas_change_mean,
+  P = d_trend_comb_agrsp_z$P_warmest_quarter_change_mean,
+  AgrArea_prop = d_trend_comb_agrsp_z$AgrArea_prop_change_mean,
+  LSUGL = d_trend_comb_agrsp_z$LSUGL_change_mean,
+  IAR = d_trend_comb_agrsp_z$IAR_change_mean,
+  
+  Tniche = d_trend_comb_agrsp_z$Tniche_mean,
+  spec_index = d_trend_comb_agrsp_z$spec_index,
+  
+  elevation = as.numeric(d_trend_comb_agrsp_z$elevation == "high"),
+  
+  year_start = model.matrix(~ year_start_f, data = d_trend_comb_agrsp_z)[, -1],
+  
+  y =  d_trend_comb_agrsp_z$trend_mean_sqrt,
+  
+  y_mean = mean(d_trend_comb_agrsp_z$trend_mean_sqrt)
+)
+
+
+
+# run model --------------------------------------------------------------------.
+set.seed(877)
+fit2 <- stan(file = "Stan_Code/Stan_regression_full.stan.stan",
+             data = l_data2,
+             chains = 4, iter = 2000)
+
+# run regression model (version 3) #############################################
+################################################################################.
+
+# full version with all 390 species
+
+d_trend_comb_z <- d_trend_comb_z %>% 
+  arrange(zone, year_start_f, species) %>% 
+  droplevels()
+
+# arrange data
+l_data3 <- list(
   N_obs = nrow(d_trend_comb_z),
   N_spec = nlevels(d_trend_comb_z$species),
   N_reg = nlevels(d_trend_comb_z$zone),
@@ -774,17 +968,19 @@ l_data <- list(
 
 # run model --------------------------------------------------------------------.
 set.seed(72)
-fit <- stan(file = "Stan_Code/Stan_regression.stan",
-     data = l_data,
-     chains = 4, iter = 2000)
+fit3 <- stan(file = "Stan_Code/Stan_regression_full.stan.stan",
+            data = l_data3,
+            chains = 4, iter = 2000)
 
 
 # model diagnostics ############################################################
 ################################################################################.
 
+# exemplary for model version 1
+
 # extract residuals:
-d_y_hat <- extract(fit, pars = "y_hat")$y_hat
-d_resid <- sweep(d_y_hat, 2, l_data$y)
+d_y_hat <- extract(fit1, pars = "y_hat")$y_hat
+d_resid <- sweep(d_y_hat, 2, l_data1$y)
 
 # QQ plots ---------------------------------------------------------------------.
 l_qqplots <- list()
@@ -858,7 +1054,9 @@ d_acf %>%
 # Tabular model results ########################################################
 ################################################################################.
 
-l_fit <- extract(fit, pars = c("mu_a", "b_T_all", "b_T_seas", "b_P",  
+# exemplary for model version 1
+
+l_fit <- extract(fit1, pars = c("mu_a", "b_T_all", "b_T_seas", "b_P",  
                                "b_AgrArea_prop", "b_LSUGL", "b_IAR", 
                                "b_Tniche", "b_spec_index", 
                                "b_elevation",
@@ -1113,8 +1311,9 @@ d_hdi %>%
 # model coefficients plot ######################################################
 ################################################################################.
 
+# exemplary for model version 1
 
-l_fit <- extract(fit, pars = c("b_T_all", "b_T_seas", "b_P",  
+l_fit <- extract(fit1, pars = c("b_T_all", "b_T_seas", "b_P",  
                                "b_AgrArea_prop", "b_LSUGL", "b_IAR", 
                                "b_Tniche", "b_spec_index", 
                                "b_elevation",
@@ -1369,7 +1568,7 @@ p1 <-
   mutate(x0 = ifelse((any(x > 0) & any(x < 0) & y == max(y)), 0, NA),
          label = formatC(mean, format = "f", digits = 3)) %>% 
   ungroup() %>% 
-  mutate(x_cat = cut(x, breaks = c(-Inf, -.02,  -.015, -.01, -.005, 0, .005, .01, .015, .02, Inf))) %>% 
+  mutate(x_cat = cut(x, breaks = c(-Inf, -.015, -.01, -.005, 0, .005, .01, .015, Inf))) %>% 
   ggplot() +
   geom_line(aes(x = x, y = y * sign_high), col = NA) +
   geom_tile(aes(x = x, fill = x_cat, y = y/2 * sign_high * scale_height, height = y * scale_height, width = xwidth)) +
@@ -1378,7 +1577,7 @@ p1 <-
   geom_text(data=function(x) {x %>% group_by(cl_var, elevation) %>% 
       filter(abs(x - median(x)) == min(abs(x - median(x)))) %>% 
       select(-x) %>% distinct()}, aes(x = mean, label = label, y = y/4 * sign_high * scale_height), col = 1) +
-  scale_fill_manual(values = RColorBrewer::brewer.pal(10, "RdYlBu"), drop = F) +
+  scale_fill_manual(values = RColorBrewer::brewer.pal(8, "RdYlBu"), drop = F) +
   theme_nothing() +
   theme(panel.spacing.y = unit(-.2, "cm"),
         panel.background = element_rect(fill = "grey90", colour = NA)) +
@@ -1396,7 +1595,7 @@ p2a <-
   mutate(x0 = ifelse((any(x > 0) & any(x < 0) & y == max(y)), 0, NA),
          label = formatC(mean, format = "f", digits = 3)) %>% 
   ungroup() %>% 
-  mutate(x_cat = cut(x, breaks = c(-Inf, -.02,  -.015, -.01, -.005, 0, .005, .01, .015, .02, Inf))) %>% 
+  mutate(x_cat = cut(x, breaks = c(-Inf, -.015, -.01, -.005, 0, .005, .01, .015, Inf))) %>% 
   ggplot() +
   geom_line(aes(x = x, y = y * sign_high), col = NA) +
   geom_tile(aes(x = x, fill = x_cat, y = y/2 * sign_high * scale_height, height = y * scale_height, width = xwidth)) +
@@ -1405,7 +1604,7 @@ p2a <-
   geom_text(data=function(x) {x %>% group_by(lu_var, elevation) %>% 
       filter(abs(x - median(x)) == min(abs(x - median(x)))) %>% 
       select(-x) %>% distinct()}, aes(x = mean, label = label, y = y/4 * sign_high * scale_height), col = 1) +
-  scale_fill_manual(values = RColorBrewer::brewer.pal(10, "RdYlBu"), drop = F) +
+  scale_fill_manual(values = RColorBrewer::brewer.pal(8, "RdYlBu"), drop = F) +
   theme_nothing() +
   theme(panel.spacing.y = unit(-.2, "cm"),
         panel.background = element_rect(fill = "grey90", colour = NA)) +
@@ -1420,7 +1619,7 @@ p2b <-
   mutate(x0 = ifelse((any(x > 0) & any(x < 0) & y == max(y)), 0, NA),
          x0 = as.numeric(x0),
          label = formatC(mean, format = "f", digits = 3)) %>% 
-  mutate(x_cat = cut(x, breaks = c(-Inf, -.02,  -.015, -.01, -.005, 0, .005, .01, .015, .02, Inf))) %>% 
+  mutate(x_cat = cut(x, breaks = c(-Inf,  -.015, -.01, -.005, 0, .005, .01, .015, Inf))) %>% 
   ggplot() +
   geom_tile(aes(x = x, fill = x_cat, y = y/2, height = y, width = xwidth)) +
   geom_line(aes(x = x, y = y)) +
@@ -1428,7 +1627,7 @@ p2b <-
   geom_text(data=function(x) {x %>%
       filter(abs(x - median(x)) == min(abs(x - median(x)))) %>% 
       select(-x) %>% distinct()}, aes(x = mean, label = label, y = y/4 * scale_height), col = 1) +
-  scale_fill_manual(values = RColorBrewer::brewer.pal(10, "RdYlBu"), drop = F) +  
+  scale_fill_manual(values = RColorBrewer::brewer.pal(8, "RdYlBu"), drop = F) +  
   theme_nothing() +
   theme(panel.background = element_rect(fill = "grey90", colour = NA))
 
@@ -1444,7 +1643,7 @@ p3 <-
          x0 = as.numeric(x0),
          label = formatC(mean, format = "f", digits = 3)) %>% 
   ungroup() %>% 
-  mutate(x_cat = cut(x, breaks = c(-Inf, -.02,  -.015, -.01, -.005, 0, .005, .01, .015, .02, Inf))) %>% 
+  mutate(x_cat = cut(x, breaks = c(-Inf, -.015, -.01, -.005, 0, .005, .01, .015,  Inf))) %>% 
   ggplot() +
   geom_tile(aes(x = x, fill = x_cat, y = y/2 * sign_high, height = y, width = xwidth)) +
   geom_line(aes(x = x, y = y * sign_high)) +
@@ -1452,7 +1651,7 @@ p3 <-
   geom_text(data=function(x) {x %>% group_by(trT_var, elevation) %>% 
       filter(abs(x - median(x)) == min(abs(x - median(x)))) %>% 
       select(-x) %>% distinct()}, aes(x = mean, label = label, y = y/4 * sign_high * scale_height), col = 1) +
-  scale_fill_manual(values = RColorBrewer::brewer.pal(10, "RdYlBu"), drop = F) +
+  scale_fill_manual(values = RColorBrewer::brewer.pal(8, "RdYlBu"), drop = F) +
   theme_nothing() +
   theme(panel.spacing.y = unit(-.1, "cm"),
         panel.background = element_rect(fill = "grey90", colour = NA)) +
@@ -1471,7 +1670,7 @@ p4 <-
          x0 = as.numeric(x0),
          label = formatC(mean, format = "f", digits = 3)) %>% 
   ungroup() %>%
-  mutate(x_cat = cut(x, breaks = c(-Inf, -.02,  -.015, -.01, -.005, 0, .005, .01, .015, .02, Inf))) %>% 
+  mutate(x_cat = cut(x, breaks = c(-Inf, -.015, -.01, -.005, 0, .005, .01, .015, Inf))) %>% 
   ggplot() +
   geom_tile(aes(x = x, fill = x_cat, y = y/2 * sign_high, height = y, width = xwidth)) +
   geom_line(aes(x = x, y = y * sign_high)) +
@@ -1479,7 +1678,7 @@ p4 <-
   geom_text(data=function(x) {x %>% group_by(spec_var, elevation) %>% 
       filter(abs(x - median(x)) == min(abs(x - median(x)))) %>% 
       select(-x) %>% distinct()}, aes(x = mean, label = label, y = y/4 * sign_high * scale_height), col = 1) +
-  scale_fill_manual(values = RColorBrewer::brewer.pal(10, "RdYlBu"), drop = F) +
+  scale_fill_manual(values = RColorBrewer::brewer.pal(8, "RdYlBu"), drop = F) +
   theme_nothing() +
   theme(panel.spacing.y = unit(-.1, "cm"),
         panel.background = element_rect(fill = "grey90", colour = NA)) +
@@ -1495,7 +1694,7 @@ p5 <-
          x0 = as.numeric(x0),
          label = formatC(mean, format = "f", digits = 3)) %>% 
   ungroup() %>%
-  mutate(x_cat = cut(x, breaks = c(-Inf, -.02,  -.015, -.01, -.005, 0, .005, .01, .015, .02, Inf))) %>% 
+  mutate(x_cat = cut(x, breaks = c(-Inf, -.015, -.01, -.005, 0, .005, .01, .015, Inf))) %>% 
   ggplot() +
   geom_tile(aes(x = x, fill = x_cat, y = y/2, height = y, width = xwidth)) +
   geom_line(aes(x = x, y = y)) +
@@ -1503,7 +1702,7 @@ p5 <-
   geom_text(data=function(x) {x %>% group_by(lu_var, cl_var) %>% 
       filter(abs(x - median(x)) == min(abs(x - median(x)))) %>% 
       select(-x) %>% distinct()}, aes(x = mean, label = label, y = y/4 * scale_height), col = 1) +
-  scale_fill_manual(values = RColorBrewer::brewer.pal(10, "RdYlBu"), drop = F) +
+  scale_fill_manual(values = RColorBrewer::brewer.pal(8, "RdYlBu"), drop = F) +
   theme_nothing() +
   theme(panel.background = element_rect(fill = "grey90", colour = NA)) +
   facet_wrap(lu_var ~ cl_var, scales = "free", nrow = 3)
@@ -1518,7 +1717,7 @@ p6 <-
          x0 = as.numeric(x0),
          label = formatC(mean, format = "f", digits = 3)) %>% 
   ungroup() %>% 
-  mutate(x_cat = cut(x, breaks = c(-Inf, -.02,  -.015, -.01, -.005, 0, .005, .01, .015, .02, Inf))) %>% 
+  mutate(x_cat = cut(x, breaks = c(-Inf, -.015, -.01, -.005, 0, .005, .01, .015, Inf))) %>% 
   ggplot() +
   geom_tile(aes(x = x, fill = x_cat, y = y/2, height = y, width = xwidth)) +
   geom_line(aes(x = x, y = y)) +
@@ -1526,7 +1725,7 @@ p6 <-
   geom_text(data=function(x) {x %>% group_by(cl_var, elevation) %>% 
       filter(abs(x - median(x)) == min(abs(x - median(x)))) %>% 
       select(-x) %>% distinct()}, aes(x = mean, label = label, y = y/4 * scale_height), col = 1) +
-  scale_fill_manual(values = RColorBrewer::brewer.pal(10, "RdYlBu"), drop = F) +
+  scale_fill_manual(values = RColorBrewer::brewer.pal(8, "RdYlBu"), drop = F) +
   theme_nothing() +
   theme(panel.background = element_rect(fill = "grey90", colour = NA)) +
   facet_wrap(trT_var ~ cl_var, scales = "free", nrow = 1)
@@ -1542,7 +1741,7 @@ p7 <-
          x0 = as.numeric(x0),
          label = formatC(mean, format = "f", digits = 3)) %>% 
   ungroup() %>% 
-  mutate(x_cat = cut(x, breaks = c(-Inf, -.02,  -.015, -.01, -.005, 0, .005, .01, .015, .02, Inf))) %>% 
+  mutate(x_cat = cut(x, breaks = c(-Inf, -.015, -.01, -.005, 0, .005, .01, .015, Inf))) %>% 
   ggplot() +
   geom_tile(aes(x = x, fill = x_cat, y = y/2, height = y, width = xwidth)) +
   geom_line(aes(x = x, y = y)) +
@@ -1550,7 +1749,7 @@ p7 <-
   geom_text(data=function(x) {x %>% group_by(spec_var, lu_var) %>% 
       filter(abs(x - median(x)) == min(abs(x - median(x)))) %>% 
       select(-x) %>% distinct()}, aes(x = mean, label = label, y = y/4 * scale_height), col = 1) +
-  scale_fill_manual(values = RColorBrewer::brewer.pal(10, "RdYlBu"), drop = F) +
+  scale_fill_manual(values = RColorBrewer::brewer.pal(8, "RdYlBu"), drop = F) +
   theme_nothing() +
   theme(panel.background = element_rect(fill = "grey90", colour = NA)) +
   facet_wrap(spec_var ~ lu_var, scales = "free", nrow = 1)
@@ -1563,7 +1762,7 @@ p8 <-
   mutate(x0 = ifelse((any(x > 0) & any(x < 0) & y == max(y)), 0, NA),
          x0 = as.numeric(x0),
          label = formatC(mean, format = "f", digits = 3)) %>% 
-  mutate(x_cat = cut(x, breaks = c(-Inf, -.02,  -.015, -.01, -.005, 0, .005, .01, .015, .02, Inf))) %>% 
+  mutate(x_cat = cut(x, breaks = c(-Inf, -.015, -.01, -.005, 0, .005, .01, .015, Inf))) %>% 
   ggplot() +
   geom_tile(aes(x = x, fill = x_cat, y = y/2, height = y, width = xwidth)) +
   geom_line(aes(x = x, y = y)) +
@@ -1571,7 +1770,7 @@ p8 <-
   geom_text(data=function(x) {x %>% 
       filter(abs(x - median(x)) == min(abs(x - median(x)))) %>% 
       select(-x) %>% distinct()}, aes(x = mean, label = label, y = y/4 * scale_height), col = 1) +
-  scale_fill_manual(values = RColorBrewer::brewer.pal(10, "RdYlBu"), drop = F) +
+  scale_fill_manual(values = RColorBrewer::brewer.pal(8, "RdYlBu"), drop = F) +
   theme_nothing() +
   theme(panel.background = element_rect(fill = "grey90", colour = NA))
 
@@ -1733,8 +1932,8 @@ trend_mean_sqrt <- d_trend_comb_z %>%
   summarise(trend_mean_sqrt = mean(trend_mean_sqrt)) %>% 
   {mean(.$trend_mean_sqrt)}
 
-d_gradient <- data.frame(upper = c(-0.02, -.015, -.01, -.005, 0, .005, .01, .015, 0.02, range_effect[2]),
-                         lower = c(range_effect[1], -0.02, -.015, -.01, -.005, 0, .005, .01, .015, 0.02),
+d_gradient <- data.frame(upper = c(-.015, -.01, -.005, 0, .005, .01, .015, range_effect[2]),
+                         lower = c(range_effect[1], -.015, -.01, -.005, 0, .005, .01, .015),
                          trend_mean_sqrt = trend_mean_sqrt,
                          z_mean = mean(l_trends$z_mean_reg$occ_m)) %>% 
   mutate(effect = (upper + lower) / 2,
@@ -1747,7 +1946,7 @@ d_gradient <- data.frame(upper = c(-0.02, -.015, -.01, -.005, 0, .005, .01, .015
          lower_trend_mean = lower_trend_mean_sqrt ^ 2 * lower_sign_trend,
          lower_z_end = z_mean + lower_trend_mean * 5) 
 
-d_gradient_sel <- data.frame(effect = c(-0.02, -.015, -.01, 0, .01, .015, 0.02),
+d_gradient_sel <- data.frame(effect = c(-.015, -.01, 0, .01, .015),
                              trend_mean_sqrt = trend_mean_sqrt,
                              z_mean = mean(l_trends$z_mean_reg$occ_m)) %>% 
   mutate(trend_mean_sqrt = trend_mean_sqrt + effect,
@@ -1758,12 +1957,12 @@ d_gradient_sel <- data.frame(effect = c(-0.02, -.015, -.01, 0, .01, .015, 0.02),
 p_gradient2 <-
   d_gradient %>%
   mutate(start_x = 0.2, end_x = 1,
-         effect_cat = cut(effect, breaks = c(-Inf, -0.02, -.015, -.01, -.005, 0, .005, .01, .015, 0.02, Inf))) %>% 
+         effect_cat = cut(effect, breaks = c(-Inf, -.015, -.01, -.005, 0, .005, .01, .015, Inf))) %>% 
   ggplot() +
   geom_rect(aes(xmin = start_x, xmax = end_x, ymin = lower_z_end, ymax = upper_z_end, fill = effect_cat, col = NULL, size = 0)) +
   geom_segment(data = d_gradient_sel,
                aes(x = .1, xend = .3, y = z_end, yend = z_end)) +
-  scale_fill_manual(values = RColorBrewer::brewer.pal(10, "RdYlBu"), drop = F) +
+  scale_fill_manual(values = RColorBrewer::brewer.pal(8, "RdYlBu"), drop = F) +
   theme(axis.line = element_blank(),
         axis.text = element_blank(),
         axis.title = element_blank(),
@@ -1803,14 +2002,68 @@ p_gradient1 <-
 plot_grid(p_gradient1, p_gradient2,
           nrow = 1, rel_widths = c(7, 1), align = "h")
 
+# Trait effect sizes ###########################################################
+################################################################################,
 
-# Scenario predictions #########################################################
+range_std_T <- (range(d_temperature_niche$Tniche_mean) - scaling_parameters$Tniche_mean$mean) / scaling_parameters$Tniche_mean$sd
+
+range_std_sp <- (range(d_spec$spec_index) - scaling_parameters$spec_index$mean) / scaling_parameters$spec_index$sd
+
+d_grid <- expand.grid(Tniche_mean = seq(from = range_std_T[1], to = range_std_T[2], length.out = 200),
+                      spec_index = seq(from = range_std_sp[1], to = range_std_sp[2], length.out = 200))
+
+mean_std_T <- d_mean %>% 
+  filter(category == "Tniche_main") %>% 
+  summarise(mean = mean(mean))
+
+mean_std_sp <- d_mean %>% 
+  filter(category == "spec_main") %>% 
+  summarise(mean = mean(mean))
+
+d_grid <- d_grid %>% 
+  mutate(change = trend_mean_sqrt + Tniche_mean * mean_std_T$mean + spec_index * mean_std_sp$mean,
+         sign_change = sign(change),
+         change = change ^ 2 * sign(change),
+         change = change * 40,
+         Tniche_mean = Tniche_mean * scaling_parameters$Tniche_mean$sd + scaling_parameters$Tniche_mean$mean,
+         spec_index = spec_index * scaling_parameters$spec_index$sd + scaling_parameters$spec_index$mean)
+
+d_traits <- d_temperature_niche %>% 
+  left_join(d_spec, by = c("species", "group"))
+
+d_hull <- d_traits %>% 
+  slice(chull(Tniche_mean, spec_index)) %>% 
+  select(Tniche_mean, spec_index)
+
+sf_hull <- st_multipoint(as.matrix(d_hull)) %>% 
+  st_cast("POLYGON")
+
+d_grid_sub <-
+  d_grid %>% 
+  mutate(X = Tniche_mean,
+         Y = spec_index) %>% 
+  st_as_sf(coords = c("X", "Y")) %>% 
+  st_filter(sf_hull, .pred = st_intersects()) %>% 
+  as.data.frame() %>% 
+  select(-geometry) 
+
+d_grid_sub %>% 
+  ggplot(aes(x = Tniche_mean,
+             y = spec_index)) +
+  geom_tile(aes(fill = change)) +
+  geom_point(data = d_traits, alpha = .5) +
+  scale_fill_gradient2() +
+  labs(x = "Temperature niche [°C]",
+       y = "Specialisation",
+       fill = "Occupancy change")
+
+# Scenario predictions (for model version 2) ###################################
 ################################################################################.
 
 # calculate predictions for different scenarios
 # compare predictions to observed trends through correlations
 
-l_fit <- extract(fit, pars = c("mu_a", "b_T_all", "b_T_seas", "b_P",  
+l_fit <- extract(fit2, pars = c("mu_a", "b_T_all", "b_T_seas", "b_P",  
                                "b_AgrArea_prop", "b_LSUGL", "b_IAR", 
                                "b_Tniche", "b_spec_index", 
                                "b_elevation",
@@ -1831,6 +2084,824 @@ l_fit <- extract(fit, pars = c("mu_a", "b_T_all", "b_T_seas", "b_P",
                                "alpha_spec_s_T_seas_LSUGL", "alpha_spec_s_P_LSUGL",
                                "alpha_spec_s_T_all_IAR", "alpha_spec_s_T_seas_IAR",
                                "alpha_spec_s_P_IAR"))
+
+f_pred <- function(iter_i,
+                   group, spec, reg,
+                   elevation, year_start,
+                   T_all, T_seas, P,
+                   AgrArea_prop, LSUGL, IAR,
+                   Tniche, spec_index) {
+  
+  pred_trends <- 
+    # Intercept
+    l_fit$mu_a[iter_i, group] +
+    # random intercepts
+    l_fit$alpha_spec_int[iter_i, spec] +
+    l_fit$alpha_reg[iter_i, reg] +
+    # climate main effects + random slopes
+    (l_fit$b_T_all[iter_i] + l_fit$alpha_spec_s_T_all[iter_i, spec]) * T_all +
+    (l_fit$b_T_seas[iter_i] + l_fit$alpha_spec_s_T_seas[iter_i, spec]) * T_seas +
+    (l_fit$b_P[iter_i] + l_fit$alpha_spec_s_P[iter_i, spec]) * P +
+    # land use main effects + random slopes
+    (l_fit$b_AgrArea_prop[iter_i] + l_fit$alpha_spec_s_AgrArea_prop[iter_i, spec]) * AgrArea_prop +
+    (l_fit$b_LSUGL[iter_i] + l_fit$alpha_spec_s_LSUGL[iter_i, spec]) * LSUGL +
+    (l_fit$b_IAR[iter_i] + l_fit$alpha_spec_s_IAR[iter_i, spec]) * IAR +
+    # trait main effects
+    l_fit$b_Tniche[iter_i] * Tniche +
+    l_fit$b_spec_index[iter_i] * spec_index +
+    # elevation main effect
+    l_fit$b_elevation[iter_i] * elevation +
+    # Climate * trait interaction
+    l_fit$b_T_all_Tniche[iter_i] * T_all  * Tniche +
+    l_fit$b_T_seas_Tniche[iter_i] * T_seas * Tniche +
+    l_fit$b_P_Tniche[iter_i] * P * Tniche +
+    # Land use * trait interaction
+    l_fit$b_AgrArea_prop_spec_index[iter_i] * AgrArea_prop * spec_index +
+    l_fit$b_LSUGL_spec_index[iter_i] * LSUGL * spec_index +
+    l_fit$b_IAR_spec_index[iter_i] * IAR * spec_index +
+    # Climate * land use interactions + random slopes
+    (l_fit$b_T_all_AgrArea_prop[iter_i] + l_fit$alpha_spec_s_T_all_AgrArea_prop[iter_i, spec]) * T_all * AgrArea_prop +
+    (l_fit$b_T_seas_AgrArea_prop[iter_i] + l_fit$alpha_spec_s_T_seas_AgrArea_prop[iter_i, spec]) * T_seas * AgrArea_prop +
+    (l_fit$b_P_AgrArea_prop[iter_i] + l_fit$alpha_spec_s_P_AgrArea_prop[iter_i, spec]) * P * AgrArea_prop +
+    (l_fit$b_T_all_LSUGL[iter_i] + l_fit$alpha_spec_s_T_all_LSUGL[iter_i, spec]) * T_all * LSUGL +
+    (l_fit$b_T_seas_LSUGL[iter_i] + l_fit$alpha_spec_s_T_seas_LSUGL[iter_i, spec]) * T_seas * LSUGL +
+    (l_fit$b_P_LSUGL[iter_i] + l_fit$alpha_spec_s_P_LSUGL[iter_i, spec]) * P * LSUGL +
+    (l_fit$b_T_all_IAR[iter_i] + l_fit$alpha_spec_s_T_all_IAR[iter_i, spec]) * T_all * IAR +
+    (l_fit$b_T_seas_IAR[iter_i] + l_fit$alpha_spec_s_T_seas_IAR[iter_i, spec]) * T_seas * IAR +
+    (l_fit$b_P_IAR[iter_i] + l_fit$alpha_spec_s_P_IAR[iter_i, spec]) * P * IAR +
+    # elevation * trait interaction
+    l_fit$b_Tniche_elevation[iter_i] * Tniche * elevation +
+    l_fit$b_spec_index_elevation[iter_i] * spec_index * elevation +
+    # elevation * climate interaction
+    l_fit$b_T_all_elevation[iter_i] * T_all * elevation +
+    l_fit$b_T_seas_elevation[iter_i] * T_seas * elevation +
+    l_fit$b_P_elevation[iter_i] * P * elevation +
+    # elevation * land use interaction
+    l_fit$b_AgrArea_prop_elevation[iter_i] * AgrArea_prop * elevation +
+    l_fit$b_LSUGL_elevation[iter_i] * LSUGL * elevation +
+    # year interval effect
+    year_start %*% l_fit$b_int[iter_i, ]
+  
+  d_trend_comb_agrsp_z %>% 
+    mutate(trend_mean_sqrt = pred_trends) %>% 
+    mutate(trend_mean = trend_mean_sqrt * scaling_parameters_agrsp$trend_mean_sqrt$sd +
+             scaling_parameters_agrsp$trend_mean_sqrt$mean,
+           sign_trend = sign(trend_mean),
+           trend_mean = sign_trend * trend_mean^2) %>% 
+    group_by(group, species, zone, elevation) %>% 
+    summarise(trend_sum = sum(trend_mean),
+              .groups = "drop") %>% 
+    left_join(d_n_squares, by = c("group", "zone")) %>% 
+    group_by(species) %>% 
+    summarise(trend_all = sum(trend_sum * n_squares) / sum(d_n_squares$n_squares[d_n_squares$group == v_splist[unique(species)]]),
+              .groups = "drop") %>% 
+    mutate(trend_all = trend_all * 5,
+           run = iter_i)
+}
+
+n_iter <- 4000
+
+# Acutal data ##################################################################.
+
+trend_actual <- d_trend_comb_agrsp_z %>% 
+  mutate(trend_mean = trend_mean_sqrt * scaling_parameters_agrsp$trend_mean_sqrt$sd +
+           scaling_parameters_agrsp$trend_mean_sqrt$mean,
+         sign_trend = sign(trend_mean),
+         trend_mean = sign_trend * trend_mean^2) %>% 
+  group_by(group, species, zone, elevation) %>% 
+  summarise(trend_sum = sum(trend_mean),
+            .groups = "drop") %>% 
+  left_join(d_n_squares, by = c("group", "zone")) %>% 
+  group_by(species) %>% 
+  summarise(trend_all = sum(trend_sum * n_squares) / sum(d_n_squares$n_squares[d_n_squares$group == v_splist[unique(species)]]),
+            .groups = "drop") %>% 
+  mutate(trend_all = trend_all * 5)
+
+
+# Actual data prediction #######################################################.
+
+d_trend_pred <- lapply(1:n_iter, 
+                       f_pred,
+                       group = as.numeric(d_trend_comb_agrsp_z$group),
+                       spec = as.numeric(d_trend_comb_agrsp_z$species),
+                       reg = as.numeric(d_trend_comb_agrsp_z$zone),
+                       
+                       T_all = d_trend_comb_agrsp_z$T_all_change_mean,
+                       T_seas = d_trend_comb_agrsp_z$T_seas_change_mean,
+                       P = d_trend_comb_agrsp_z$P_warmest_quarter_change_mean,
+                       AgrArea_prop = d_trend_comb_agrsp_z$AgrArea_prop_change_mean,
+                       LSUGL = d_trend_comb_agrsp_z$LSUGL_change_mean,
+                       IAR = d_trend_comb_agrsp_z$IAR_change_mean,
+                       
+                       Tniche = d_trend_comb_agrsp_z$Tniche_mean,
+                       spec_index = d_trend_comb_agrsp_z$spec_index,
+                       
+                       elevation = as.numeric(d_trend_comb_agrsp_z$elevation == "high"),
+                       
+                       year_start = model.matrix(~ year_start_f, data = d_trend_comb_agrsp_z)[, -1]) %>% 
+  bind_rows() %>% 
+  left_join(trend_actual, by = "species",
+            suffix = c(".pred", ".obs")) %>% 
+  group_by(run) %>% 
+  group_split() %>%
+  map_dfr(~ data.frame(run = unique(.$run),
+                       cor = cor(.$trend_all.obs, .$trend_all.pred))) %>% 
+  mutate(type = "actual data")
+
+# All zero #####################################################################.
+
+d_trend_pred <- lapply(1:n_iter, 
+                       f_pred,
+                       group = as.numeric(d_trend_comb_agrsp_z$group),
+                       spec = as.numeric(d_trend_comb_agrsp_z$species),
+                       reg = as.numeric(d_trend_comb_agrsp_z$zone),
+                       
+                       T_all = - scaling_parameters_agrsp$T_all_change_mean$mean / 
+                         scaling_parameters_agrsp$T_all_change_mean$sd,
+                       T_seas = - scaling_parameters_agrsp$T_seas_change_mean$mean / 
+                         scaling_parameters_agrsp$T_seas_change_mean$sd,
+                       P = - scaling_parameters_agrsp$P_warmest_quarter_change_mean$mean / 
+                         scaling_parameters_agrsp$P_warmest_quarter_change_mean$sd,
+                       AgrArea_prop = - scaling_parameters_agrsp$AgrArea_prop_change_mean$mean / 
+                         scaling_parameters_agrsp$AgrArea_prop_change_mean$sd,
+                       LSUGL =  - scaling_parameters_agrsp$LSUGL_change_mean$mean / 
+                         scaling_parameters_agrsp$LSUGL_change_mean$sd,
+                       IAR =  - scaling_parameters_agrsp$IAR_change_mean$mean / 
+                         scaling_parameters_agrsp$IAR_change_mean$sd,
+                       
+                       Tniche = d_trend_comb_agrsp_z$Tniche_mean,
+                       spec_index = d_trend_comb_agrsp_z$spec_index,
+                       
+                       elevation = as.numeric(d_trend_comb_agrsp_z$elevation == "high"),
+                       
+                       year_start = model.matrix(~ year_start_f, data = d_trend_comb_agrsp_z)[, -1]) %>% 
+  bind_rows() %>% 
+  left_join(trend_actual, by = "species",
+            suffix = c(".pred", ".obs")) %>% 
+  group_by(run) %>% 
+  group_split() %>%
+  map_dfr(~ data.frame(run = unique(.$run),
+                       cor = cor(.$trend_all.obs, .$trend_all.pred))) %>% 
+  mutate(type = "target changes",
+         cl_var = "none",
+         lu_var = "none") %>% 
+  bind_rows(d_trend_pred, .)
+
+# Only T_all ###################################################################.
+
+d_trend_pred <- lapply(1:n_iter, 
+                       f_pred,
+                       group = as.numeric(d_trend_comb_agrsp_z$group),
+                       spec = as.numeric(d_trend_comb_agrsp_z$species),
+                       reg = as.numeric(d_trend_comb_agrsp_z$zone),
+                       
+                       T_all = d_trend_comb_agrsp_z$T_all_change_mean,
+                       T_seas = - scaling_parameters_agrsp$T_seas_change_mean$mean / 
+                         scaling_parameters_agrsp$T_seas_change_mean$sd,
+                       P = - scaling_parameters_agrsp$P_warmest_quarter_change_mean$mean / 
+                         scaling_parameters_agrsp$P_warmest_quarter_change_mean$sd,
+                       AgrArea_prop = - scaling_parameters_agrsp$AgrArea_prop_change_mean$mean / 
+                         scaling_parameters_agrsp$AgrArea_prop_change_mean$sd,
+                       LSUGL =  - scaling_parameters_agrsp$LSUGL_change_mean$mean / 
+                         scaling_parameters_agrsp$LSUGL_change_mean$sd,
+                       IAR =  - scaling_parameters_agrsp$IAR_change_mean$mean / 
+                         scaling_parameters_agrsp$IAR_change_mean$sd,
+                       
+                       Tniche = d_trend_comb_agrsp_z$Tniche_mean,
+                       spec_index = d_trend_comb_agrsp_z$spec_index,
+                       
+                       elevation = as.numeric(d_trend_comb_agrsp_z$elevation == "high"),
+                       
+                       year_start = model.matrix(~ year_start_f, data = d_trend_comb_agrsp_z)[, -1]) %>% 
+  bind_rows() %>% 
+  left_join(trend_actual, by = "species",
+            suffix = c(".pred", ".obs")) %>% 
+  group_by(run) %>% 
+  group_split() %>%
+  map_dfr(~ data.frame(run = unique(.$run),
+                       cor = cor(.$trend_all.obs, .$trend_all.pred))) %>% 
+  mutate(type = "target changes",
+         cl_var = "T_all",
+         lu_var = "none") %>% 
+  bind_rows(d_trend_pred, .)
+
+# Only T_seas ##################################################################.
+
+d_trend_pred <- lapply(1:n_iter, 
+                       f_pred,
+                       group = as.numeric(d_trend_comb_agrsp_z$group),
+                       spec = as.numeric(d_trend_comb_agrsp_z$species),
+                       reg = as.numeric(d_trend_comb_agrsp_z$zone),
+                       
+                       T_all = - scaling_parameters_agrsp$T_all_change_mean$mean / 
+                         scaling_parameters_agrsp$T_all_change_mean$sd,
+                       T_seas = d_trend_comb_agrsp_z$T_seas_change_mean,
+                       P = - scaling_parameters_agrsp$P_warmest_quarter_change_mean$mean / 
+                         scaling_parameters_agrsp$P_warmest_quarter_change_mean$sd,
+                       AgrArea_prop = - scaling_parameters_agrsp$AgrArea_prop_change_mean$mean / 
+                         scaling_parameters_agrsp$AgrArea_prop_change_mean$sd,
+                       LSUGL =  - scaling_parameters_agrsp$LSUGL_change_mean$mean / 
+                         scaling_parameters_agrsp$LSUGL_change_mean$sd,
+                       IAR =  - scaling_parameters_agrsp$IAR_change_mean$mean / 
+                         scaling_parameters_agrsp$IAR_change_mean$sd,
+                       
+                       Tniche = d_trend_comb_agrsp_z$Tniche_mean,
+                       spec_index = d_trend_comb_agrsp_z$spec_index,
+                       
+                       elevation = as.numeric(d_trend_comb_agrsp_z$elevation == "high"),
+                       
+                       year_start = model.matrix(~ year_start_f, data = d_trend_comb_agrsp_z)[, -1]) %>% 
+  bind_rows() %>% 
+  left_join(trend_actual, by = "species",
+            suffix = c(".pred", ".obs")) %>% 
+  group_by(run) %>% 
+  group_split() %>%
+  map_dfr(~ data.frame(run = unique(.$run),
+                       cor = cor(.$trend_all.obs, .$trend_all.pred))) %>% 
+  mutate(type = "target changes",
+         cl_var = "T_seas",
+         lu_var = "none") %>% 
+  bind_rows(d_trend_pred, .)
+
+# Only P #######################################################################.
+
+d_trend_pred <- lapply(1:n_iter, 
+                       f_pred,
+                       group = as.numeric(d_trend_comb_agrsp_z$group),
+                       spec = as.numeric(d_trend_comb_agrsp_z$species),
+                       reg = as.numeric(d_trend_comb_agrsp_z$zone),
+                       
+                       T_all = - scaling_parameters_agrsp$T_all_change_mean$mean / 
+                         scaling_parameters_agrsp$T_all_change_mean$sd,
+                       T_seas = - scaling_parameters_agrsp$T_seas_change_mean$mean / 
+                         scaling_parameters_agrsp$T_seas_change_mean$sd,
+                       P = d_trend_comb_agrsp_z$P_warmest_quarter_change_mean,
+                       AgrArea_prop = - scaling_parameters_agrsp$AgrArea_prop_change_mean$mean / 
+                         scaling_parameters_agrsp$AgrArea_prop_change_mean$sd,
+                       LSUGL =  - scaling_parameters_agrsp$LSUGL_change_mean$mean / 
+                         scaling_parameters_agrsp$LSUGL_change_mean$sd,
+                       IAR =  - scaling_parameters_agrsp$IAR_change_mean$mean / 
+                         scaling_parameters_agrsp$IAR_change_mean$sd,
+                       
+                       Tniche = d_trend_comb_agrsp_z$Tniche_mean,
+                       spec_index = d_trend_comb_agrsp_z$spec_index,
+                       
+                       elevation = as.numeric(d_trend_comb_agrsp_z$elevation == "high"),
+                       
+                       year_start = model.matrix(~ year_start_f, data = d_trend_comb_agrsp_z)[, -1]) %>% 
+  bind_rows() %>% 
+  left_join(trend_actual, by = "species",
+            suffix = c(".pred", ".obs")) %>% 
+  group_by(run) %>% 
+  group_split() %>%
+  map_dfr(~ data.frame(run = unique(.$run),
+                       cor = cor(.$trend_all.obs, .$trend_all.pred))) %>% 
+  mutate(type = "target changes",
+         cl_var = "P",
+         lu_var = "none") %>% 
+  bind_rows(d_trend_pred, .)
+
+# Only AgrArea_prop #################################################################.
+
+d_trend_pred <- lapply(1:n_iter, 
+                       f_pred,
+                       group = as.numeric(d_trend_comb_agrsp_z$group),
+                       spec = as.numeric(d_trend_comb_agrsp_z$species),
+                       reg = as.numeric(d_trend_comb_agrsp_z$zone),
+                       
+                       T_all = - scaling_parameters_agrsp$T_all_change_mean$mean / 
+                         scaling_parameters_agrsp$T_all_change_mean$sd,
+                       T_seas = - scaling_parameters_agrsp$T_seas_change_mean$mean / 
+                         scaling_parameters_agrsp$T_seas_change_mean$sd,
+                       P = - scaling_parameters_agrsp$P_warmest_quarter_change_mean$mean / 
+                         scaling_parameters_agrsp$P_warmest_quarter_change_mean$sd,
+                       AgrArea_prop = d_trend_comb_agrsp_z$AgrArea_prop_change_mean,
+                       LSUGL =  - scaling_parameters_agrsp$LSUGL_change_mean$mean / 
+                         scaling_parameters_agrsp$LSUGL_change_mean$sd,
+                       IAR =  - scaling_parameters_agrsp$IAR_change_mean$mean / 
+                         scaling_parameters_agrsp$IAR_change_mean$sd,
+                       
+                       Tniche = d_trend_comb_agrsp_z$Tniche_mean,
+                       spec_index = d_trend_comb_agrsp_z$spec_index,
+                       
+                       elevation = as.numeric(d_trend_comb_agrsp_z$elevation == "high"),
+                       
+                       year_start = model.matrix(~ year_start_f, data = d_trend_comb_agrsp_z)[, -1]) %>% 
+  bind_rows() %>% 
+  left_join(trend_actual, by = "species",
+            suffix = c(".pred", ".obs")) %>% 
+  group_by(run) %>% 
+  group_split() %>%
+  map_dfr(~ data.frame(run = unique(.$run),
+                       cor = cor(.$trend_all.obs, .$trend_all.pred))) %>% 
+  mutate(type = "target changes",
+         lu_var = "AgrArea_prop",
+         cl_var = "none") %>% 
+  bind_rows(d_trend_pred, .)
+
+# Only LSUGL ###################################################################.
+
+d_trend_pred <- lapply(1:n_iter, 
+                       f_pred,
+                       group = as.numeric(d_trend_comb_agrsp_z$group),
+                       spec = as.numeric(d_trend_comb_agrsp_z$species),
+                       reg = as.numeric(d_trend_comb_agrsp_z$zone),
+                       
+                       T_all = - scaling_parameters_agrsp$T_all_change_mean$mean / 
+                         scaling_parameters_agrsp$T_all_change_mean$sd,
+                       T_seas = - scaling_parameters_agrsp$T_seas_change_mean$mean / 
+                         scaling_parameters_agrsp$T_seas_change_mean$sd,
+                       P = - scaling_parameters_agrsp$P_warmest_quarter_change_mean$mean / 
+                         scaling_parameters_agrsp$P_warmest_quarter_change_mean$sd,
+                       AgrArea_prop = - scaling_parameters_agrsp$AgrArea_prop_change_mean$mean / 
+                         scaling_parameters_agrsp$AgrArea_prop_change_mean$sd,
+                       LSUGL =  d_trend_comb_agrsp_z$LSUGL_change_mean,
+                       IAR =  - scaling_parameters_agrsp$IAR_change_mean$mean / 
+                         scaling_parameters_agrsp$IAR_change_mean$sd,
+                       
+                       Tniche = d_trend_comb_agrsp_z$Tniche_mean,
+                       spec_index = d_trend_comb_agrsp_z$spec_index,
+                       
+                       elevation = as.numeric(d_trend_comb_agrsp_z$elevation == "high"),
+                       
+                       year_start = model.matrix(~ year_start_f, data = d_trend_comb_agrsp_z)[, -1]) %>% 
+  bind_rows() %>% 
+  left_join(trend_actual, by = "species",
+            suffix = c(".pred", ".obs")) %>% 
+  group_by(run) %>% 
+  group_split() %>%
+  map_dfr(~ data.frame(run = unique(.$run),
+                       cor = cor(.$trend_all.obs, .$trend_all.pred))) %>% 
+  mutate(type = "target changes",
+         lu_var  = "LSUGL",
+         cl_var = "none") %>% 
+  bind_rows(d_trend_pred, .)
+
+# Only InsINnd #################################################################.
+
+d_trend_pred <- lapply(1:n_iter, 
+                       f_pred,
+                       group = as.numeric(d_trend_comb_agrsp_z$group),
+                       spec = as.numeric(d_trend_comb_agrsp_z$species),
+                       reg = as.numeric(d_trend_comb_agrsp_z$zone),
+                       
+                       T_all = - scaling_parameters_agrsp$T_all_change_mean$mean / 
+                         scaling_parameters_agrsp$T_all_change_mean$sd,
+                       T_seas = - scaling_parameters_agrsp$T_seas_change_mean$mean / 
+                         scaling_parameters_agrsp$T_seas_change_mean$sd,
+                       P = - scaling_parameters_agrsp$P_warmest_quarter_change_mean$mean / 
+                         scaling_parameters_agrsp$P_warmest_quarter_change_mean$sd,
+                       AgrArea_prop = - scaling_parameters_agrsp$AgrArea_prop_change_mean$mean / 
+                         scaling_parameters_agrsp$AgrArea_prop_change_mean$sd,
+                       LSUGL =  - scaling_parameters_agrsp$LSUGL_change_mean$mean / 
+                         scaling_parameters_agrsp$LSUGL_change_mean$sd,
+                       IAR =  d_trend_comb_agrsp_z$IAR_change_mean,
+                       
+                       Tniche = d_trend_comb_agrsp_z$Tniche_mean,
+                       spec_index = d_trend_comb_agrsp_z$spec_index,
+                       
+                       elevation = as.numeric(d_trend_comb_agrsp_z$elevation == "high"),
+                       
+                       year_start = model.matrix(~ year_start_f, data = d_trend_comb_agrsp_z)[, -1]) %>% 
+  bind_rows() %>% 
+  left_join(trend_actual, by = "species",
+            suffix = c(".pred", ".obs")) %>% 
+  group_by(run) %>% 
+  group_split() %>%
+  map_dfr(~ data.frame(run = unique(.$run),
+                       cor = cor(.$trend_all.obs, .$trend_all.pred))) %>% 
+  mutate(type = "target changes",
+         lu_var  = "IAR",
+         cl_var = "none") %>% 
+  bind_rows(d_trend_pred, .)
+
+
+#  T_all  & AgrArea_prop ############################################################.
+
+d_trend_pred <- lapply(1:n_iter, 
+                       f_pred,
+                       group = as.numeric(d_trend_comb_agrsp_z$group),
+                       spec = as.numeric(d_trend_comb_agrsp_z$species),
+                       reg = as.numeric(d_trend_comb_agrsp_z$zone),
+                       
+                       T_all = d_trend_comb_agrsp_z$T_all_change_mean,
+                       T_seas = - scaling_parameters_agrsp$T_seas_change_mean$mean / 
+                         scaling_parameters_agrsp$T_seas_change_mean$sd,
+                       P = - scaling_parameters_agrsp$P_warmest_quarter_change_mean$mean / 
+                         scaling_parameters_agrsp$P_warmest_quarter_change_mean$sd,
+                       AgrArea_prop = d_trend_comb_agrsp_z$AgrArea_prop_change_mean,
+                       LSUGL =  - scaling_parameters_agrsp$LSUGL_change_mean$mean / 
+                         scaling_parameters_agrsp$LSUGL_change_mean$sd,
+                       IAR =  - scaling_parameters_agrsp$IAR_change_mean$mean / 
+                         scaling_parameters_agrsp$IAR_change_mean$sd,
+                       
+                       Tniche = d_trend_comb_agrsp_z$Tniche_mean,
+                       spec_index = d_trend_comb_agrsp_z$spec_index,
+                       
+                       elevation = as.numeric(d_trend_comb_agrsp_z$elevation == "high"),
+                       
+                       year_start = model.matrix(~ year_start_f, data = d_trend_comb_agrsp_z)[, -1]) %>% 
+  bind_rows() %>% 
+  left_join(trend_actual, by = "species",
+            suffix = c(".pred", ".obs")) %>% 
+  group_by(run) %>% 
+  group_split() %>%
+  map_dfr(~ data.frame(run = unique(.$run),
+                       cor = cor(.$trend_all.obs, .$trend_all.pred))) %>% 
+  mutate(type = "target changes",
+         cl_var = "T_all",
+         lu_var = "AgrArea_prop") %>% 
+  bind_rows(d_trend_pred, .)
+
+#  T_all  & LSUGL ##############################################################.
+
+d_trend_pred <- lapply(1:n_iter, 
+                       f_pred,
+                       group = as.numeric(d_trend_comb_agrsp_z$group),
+                       spec = as.numeric(d_trend_comb_agrsp_z$species),
+                       reg = as.numeric(d_trend_comb_agrsp_z$zone),
+                       
+                       T_all = d_trend_comb_agrsp_z$T_all_change_mean,
+                       T_seas = - scaling_parameters_agrsp$T_seas_change_mean$mean / 
+                         scaling_parameters_agrsp$T_seas_change_mean$sd,
+                       P = - scaling_parameters_agrsp$P_warmest_quarter_change_mean$mean / 
+                         scaling_parameters_agrsp$P_warmest_quarter_change_mean$sd,
+                       AgrArea_prop = - scaling_parameters_agrsp$AgrArea_prop_change_mean$mean / 
+                         scaling_parameters_agrsp$AgrArea_prop_change_mean$sd,
+                       LSUGL =  d_trend_comb_agrsp_z$LSUGL_change_mean,
+                       IAR =  - scaling_parameters_agrsp$IAR_change_mean$mean / 
+                         scaling_parameters_agrsp$IAR_change_mean$sd,
+                       
+                       Tniche = d_trend_comb_agrsp_z$Tniche_mean,
+                       spec_index = d_trend_comb_agrsp_z$spec_index,
+                       
+                       elevation = as.numeric(d_trend_comb_agrsp_z$elevation == "high"),
+                       
+                       year_start = model.matrix(~ year_start_f, data = d_trend_comb_agrsp_z)[, -1]) %>% 
+  bind_rows() %>% 
+  left_join(trend_actual, by = "species",
+            suffix = c(".pred", ".obs")) %>% 
+  group_by(run) %>% 
+  group_split() %>%
+  map_dfr(~ data.frame(run = unique(.$run),
+                       cor = cor(.$trend_all.obs, .$trend_all.pred))) %>% 
+  mutate(type = "target changes",
+         cl_var = "T_all",
+         lu_var = "LSUGL") %>% 
+  bind_rows(d_trend_pred, .)
+
+# T_all  & IAR ##############################################################.
+
+d_trend_pred <- lapply(1:n_iter, 
+                       f_pred,
+                       group = as.numeric(d_trend_comb_agrsp_z$group),
+                       spec = as.numeric(d_trend_comb_agrsp_z$species),
+                       reg = as.numeric(d_trend_comb_agrsp_z$zone),
+                       
+                       T_all = d_trend_comb_agrsp_z$T_all_change_mean,
+                       T_seas = - scaling_parameters_agrsp$T_seas_change_mean$mean / 
+                         scaling_parameters_agrsp$T_seas_change_mean$sd,
+                       P = - scaling_parameters_agrsp$P_warmest_quarter_change_mean$mean / 
+                         scaling_parameters_agrsp$P_warmest_quarter_change_mean$sd,
+                       AgrArea_prop = - scaling_parameters_agrsp$AgrArea_prop_change_mean$mean / 
+                         scaling_parameters_agrsp$AgrArea_prop_change_mean$sd,
+                       LSUGL =  - scaling_parameters_agrsp$LSUGL_change_mean$mean / 
+                         scaling_parameters_agrsp$LSUGL_change_mean$sd,
+                       IAR =  d_trend_comb_agrsp_z$IAR_change_mean,
+                       
+                       Tniche = d_trend_comb_agrsp_z$Tniche_mean,
+                       spec_index = d_trend_comb_agrsp_z$spec_index,
+                       
+                       elevation = as.numeric(d_trend_comb_agrsp_z$elevation == "high"),
+                       
+                       year_start = model.matrix(~ year_start_f, data = d_trend_comb_agrsp_z)[, -1]) %>% 
+  bind_rows() %>% 
+  left_join(trend_actual, by = "species",
+            suffix = c(".pred", ".obs")) %>% 
+  group_by(run) %>% 
+  group_split() %>%
+  map_dfr(~ data.frame(run = unique(.$run),
+                       cor = cor(.$trend_all.obs, .$trend_all.pred))) %>% 
+  mutate(type = "target changes",
+         cl_var = "T_all",
+         lu_var = "IAR") %>% 
+  bind_rows(d_trend_pred, .)
+
+# T_seas & AgrArea_prop #############################################################.
+
+d_trend_pred <- lapply(1:n_iter, 
+                       f_pred,
+                       group = as.numeric(d_trend_comb_agrsp_z$group),
+                       spec = as.numeric(d_trend_comb_agrsp_z$species),
+                       reg = as.numeric(d_trend_comb_agrsp_z$zone),
+                       
+                       T_all = - scaling_parameters_agrsp$T_all_change_mean$mean / 
+                         scaling_parameters_agrsp$T_all_change_mean$sd,
+                       T_seas = d_trend_comb_agrsp_z$T_seas_change_mean,
+                       P = - scaling_parameters_agrsp$P_warmest_quarter_change_mean$mean / 
+                         scaling_parameters_agrsp$P_warmest_quarter_change_mean$sd,
+                       AgrArea_prop = d_trend_comb_agrsp_z$AgrArea_prop_change_mean,
+                       LSUGL =  - scaling_parameters_agrsp$LSUGL_change_mean$mean / 
+                         scaling_parameters_agrsp$LSUGL_change_mean$sd,
+                       IAR =  - scaling_parameters_agrsp$IAR_change_mean$mean / 
+                         scaling_parameters_agrsp$IAR_change_mean$sd,
+                       
+                       Tniche = d_trend_comb_agrsp_z$Tniche_mean,
+                       spec_index = d_trend_comb_agrsp_z$spec_index,
+                       
+                       elevation = as.numeric(d_trend_comb_agrsp_z$elevation == "high"),
+                       
+                       year_start = model.matrix(~ year_start_f, data = d_trend_comb_agrsp_z)[, -1]) %>% 
+  bind_rows() %>% 
+  left_join(trend_actual, by = "species",
+            suffix = c(".pred", ".obs")) %>% 
+  group_by(run) %>% 
+  group_split() %>%
+  map_dfr(~ data.frame(run = unique(.$run),
+                       cor = cor(.$trend_all.obs, .$trend_all.pred))) %>% 
+  mutate(type = "target changes",
+         cl_var = "T_seas",
+         lu_var = "AgrArea_prop") %>% 
+  bind_rows(d_trend_pred, .)
+
+
+# T_seas & LSUGL ###############################################################.
+
+d_trend_pred <- lapply(1:n_iter, 
+                       f_pred,
+                       group = as.numeric(d_trend_comb_agrsp_z$group),
+                       spec = as.numeric(d_trend_comb_agrsp_z$species),
+                       reg = as.numeric(d_trend_comb_agrsp_z$zone),
+                       
+                       T_all = - scaling_parameters_agrsp$T_all_change_mean$mean / 
+                         scaling_parameters_agrsp$T_all_change_mean$sd,
+                       T_seas = d_trend_comb_agrsp_z$T_seas_change_mean,
+                       P = - scaling_parameters_agrsp$P_warmest_quarter_change_mean$mean / 
+                         scaling_parameters_agrsp$P_warmest_quarter_change_mean$sd,
+                       AgrArea_prop = - scaling_parameters_agrsp$AgrArea_prop_change_mean$mean / 
+                         scaling_parameters_agrsp$AgrArea_prop_change_mean$sd,
+                       LSUGL =  d_trend_comb_agrsp_z$LSUGL_change_mean,
+                       IAR =  - scaling_parameters_agrsp$IAR_change_mean$mean / 
+                         scaling_parameters_agrsp$IAR_change_mean$sd,
+                       
+                       Tniche = d_trend_comb_agrsp_z$Tniche_mean,
+                       spec_index = d_trend_comb_agrsp_z$spec_index,
+                       
+                       elevation = as.numeric(d_trend_comb_agrsp_z$elevation == "high"),
+                       
+                       year_start = model.matrix(~ year_start_f, data = d_trend_comb_agrsp_z)[, -1]) %>% 
+  bind_rows() %>% 
+  left_join(trend_actual, by = "species",
+            suffix = c(".pred", ".obs")) %>% 
+  group_by(run) %>% 
+  group_split() %>%
+  map_dfr(~ data.frame(run = unique(.$run),
+                       cor = cor(.$trend_all.obs, .$trend_all.pred))) %>% 
+  mutate(type = "target changes",
+         cl_var = "T_seas",
+         lu_var = "LSUGL") %>% 
+  bind_rows(d_trend_pred, .)
+
+# T_seas & IAR ##############################################################.
+
+d_trend_pred <- lapply(1:n_iter, 
+                       f_pred,
+                       group = as.numeric(d_trend_comb_agrsp_z$group),
+                       spec = as.numeric(d_trend_comb_agrsp_z$species),
+                       reg = as.numeric(d_trend_comb_agrsp_z$zone),
+                       
+                       T_all = - scaling_parameters_agrsp$T_all_change_mean$mean / 
+                         scaling_parameters_agrsp$T_all_change_mean$sd,
+                       T_seas = d_trend_comb_agrsp_z$T_seas_change_mean,
+                       P = - scaling_parameters_agrsp$P_warmest_quarter_change_mean$mean / 
+                         scaling_parameters_agrsp$P_warmest_quarter_change_mean$sd,
+                       AgrArea_prop = - scaling_parameters_agrsp$AgrArea_prop_change_mean$mean / 
+                         scaling_parameters_agrsp$AgrArea_prop_change_mean$sd,
+                       LSUGL =  - scaling_parameters_agrsp$LSUGL_change_mean$mean / 
+                         scaling_parameters_agrsp$LSUGL_change_mean$sd,
+                       IAR =  d_trend_comb_agrsp_z$IAR_change_mean,
+                       
+                       Tniche = d_trend_comb_agrsp_z$Tniche_mean,
+                       spec_index = d_trend_comb_agrsp_z$spec_index,
+                       
+                       elevation = as.numeric(d_trend_comb_agrsp_z$elevation == "high"),
+                       
+                       year_start = model.matrix(~ year_start_f, data = d_trend_comb_agrsp_z)[, -1]) %>% 
+  bind_rows() %>% 
+  left_join(trend_actual, by = "species",
+            suffix = c(".pred", ".obs")) %>% 
+  group_by(run) %>% 
+  group_split() %>%
+  map_dfr(~ data.frame(run = unique(.$run),
+                       cor = cor(.$trend_all.obs, .$trend_all.pred))) %>% 
+  mutate(type = "target changes",
+         cl_var = "T_seas",
+         lu_var = "IAR") %>% 
+  bind_rows(d_trend_pred, .)
+
+# P & AgrArea_prop ##################################################################.
+
+d_trend_pred <- lapply(1:n_iter, 
+                       f_pred,
+                       group = as.numeric(d_trend_comb_agrsp_z$group),
+                       spec = as.numeric(d_trend_comb_agrsp_z$species),
+                       reg = as.numeric(d_trend_comb_agrsp_z$zone),
+                       
+                       T_all = - scaling_parameters_agrsp$T_all_change_mean$mean / 
+                         scaling_parameters_agrsp$T_all_change_mean$sd,
+                       T_seas = - scaling_parameters_agrsp$T_seas_change_mean$mean / 
+                         scaling_parameters_agrsp$T_seas_change_mean$sd,
+                       P = d_trend_comb_agrsp_z$P_warmest_quarter_change_mean,
+                       AgrArea_prop = d_trend_comb_agrsp_z$AgrArea_prop_change_mean,
+                       LSUGL =  - scaling_parameters_agrsp$LSUGL_change_mean$mean / 
+                         scaling_parameters_agrsp$LSUGL_change_mean$sd,
+                       IAR =  - scaling_parameters_agrsp$IAR_change_mean$mean / 
+                         scaling_parameters_agrsp$IAR_change_mean$sd,
+                       
+                       Tniche = d_trend_comb_agrsp_z$Tniche_mean,
+                       spec_index = d_trend_comb_agrsp_z$spec_index,
+                       
+                       elevation = as.numeric(d_trend_comb_agrsp_z$elevation == "high"),
+                       
+                       year_start = model.matrix(~ year_start_f, data = d_trend_comb_agrsp_z)[, -1]) %>% 
+  bind_rows() %>% 
+  left_join(trend_actual, by = "species",
+            suffix = c(".pred", ".obs")) %>% 
+  group_by(run) %>% 
+  group_split() %>%
+  map_dfr(~ data.frame(run = unique(.$run),
+                       cor = cor(.$trend_all.obs, .$trend_all.pred))) %>% 
+  mutate(type = "target changes",
+         cl_var = "P",
+         lu_var = "AgrArea_prop") %>% 
+  bind_rows(d_trend_pred, .)
+
+# P & LSUGL ####################################################################.
+
+d_trend_pred <- lapply(1:n_iter, 
+                       f_pred,
+                       group = as.numeric(d_trend_comb_agrsp_z$group),
+                       spec = as.numeric(d_trend_comb_agrsp_z$species),
+                       reg = as.numeric(d_trend_comb_agrsp_z$zone),
+                       
+                       T_all = - scaling_parameters_agrsp$T_all_change_mean$mean / 
+                         scaling_parameters_agrsp$T_all_change_mean$sd,
+                       T_seas = - scaling_parameters_agrsp$T_seas_change_mean$mean / 
+                         scaling_parameters_agrsp$T_seas_change_mean$sd,
+                       P = d_trend_comb_agrsp_z$P_warmest_quarter_change_mean,
+                       AgrArea_prop = - scaling_parameters_agrsp$AgrArea_prop_change_mean$mean / 
+                         scaling_parameters_agrsp$AgrArea_prop_change_mean$sd,
+                       LSUGL =  d_trend_comb_agrsp_z$LSUGL_change_mean,
+                       IAR =  - scaling_parameters_agrsp$IAR_change_mean$mean / 
+                         scaling_parameters_agrsp$IAR_change_mean$sd,
+                       
+                       Tniche = d_trend_comb_agrsp_z$Tniche_mean,
+                       spec_index = d_trend_comb_agrsp_z$spec_index,
+                       
+                       elevation = as.numeric(d_trend_comb_agrsp_z$elevation == "high"),
+                       
+                       year_start = model.matrix(~ year_start_f, data = d_trend_comb_agrsp_z)[, -1]) %>% 
+  bind_rows() %>%
+  left_join(trend_actual, by = "species",
+            suffix = c(".pred", ".obs")) %>% 
+  group_by(run) %>% 
+  group_split() %>%
+  map_dfr(~ data.frame(run = unique(.$run),
+                       cor = cor(.$trend_all.obs, .$trend_all.pred))) %>% 
+  mutate(type = "target changes",
+         cl_var = "P",
+         lu_var = "LSUGL") %>% 
+  bind_rows(d_trend_pred, .)
+
+# P & IAR ###################################################################.
+
+d_trend_pred <- lapply(1:n_iter, 
+                       f_pred,
+                       group = as.numeric(d_trend_comb_agrsp_z$group),
+                       spec = as.numeric(d_trend_comb_agrsp_z$species),
+                       reg = as.numeric(d_trend_comb_agrsp_z$zone),
+                       
+                       T_all = - scaling_parameters_agrsp$T_all_change_mean$mean / 
+                         scaling_parameters_agrsp$T_all_change_mean$sd,
+                       T_seas = - scaling_parameters_agrsp$T_seas_change_mean$mean / 
+                         scaling_parameters_agrsp$T_seas_change_mean$sd,
+                       P = d_trend_comb_agrsp_z$P_warmest_quarter_change_mean,
+                       AgrArea_prop = - scaling_parameters_agrsp$AgrArea_prop_change_mean$mean / 
+                         scaling_parameters_agrsp$AgrArea_prop_change_mean$sd,
+                       LSUGL =  - scaling_parameters_agrsp$LSUGL_change_mean$mean / 
+                         scaling_parameters_agrsp$LSUGL_change_mean$sd,
+                       IAR =  d_trend_comb_agrsp_z$IAR_change_mean,
+                       
+                       Tniche = d_trend_comb_agrsp_z$Tniche_mean,
+                       spec_index = d_trend_comb_agrsp_z$spec_index,
+                       
+                       elevation = as.numeric(d_trend_comb_agrsp_z$elevation == "high"),
+                       
+                       year_start = model.matrix(~ year_start_f, data = d_trend_comb_agrsp_z)[, -1]) %>% 
+  bind_rows() %>% 
+  left_join(trend_actual, by = "species",
+            suffix = c(".pred", ".obs")) %>% 
+  group_by(run) %>% 
+  group_split() %>%
+  map_dfr(~ data.frame(run = unique(.$run),
+                       cor = cor(.$trend_all.obs, .$trend_all.pred))) %>% 
+  mutate(type = "target changes",
+         cl_var = "P",
+         lu_var = "IAR") %>% 
+  bind_rows(d_trend_pred, .)
+
+# summarise and plot scenarios -------------------------------------------------.
+# ------------------------------------------------------------------------------.
+
+d_pred_actual_data <- d_trend_pred %>% 
+  filter(type == "actual data") %>% 
+  mutate(R2 = cor^2) %>% 
+  summarise(mean = mean(R2),
+            lower80 = hdi(R2, ci = .8)$CI_low,
+            upper80 = hdi(R2, ci = .8)$CI_high,
+            lower95 = hdi(R2, ci = .95)$CI_low,
+            upper95 = hdi(R2, ci = .95)$CI_high,
+            .groups = "drop") %>% 
+  mutate(cl_var = "All together", lu_var = "No change") # "No change" not true here, but needed for accurate plotting
+
+
+d_trend_pred_agg <- d_trend_pred %>% 
+  filter(type == "target changes") %>% 
+  mutate(R2 = cor^2) %>% 
+  group_by(cl_var, lu_var) %>% 
+  summarise(mean = mean(R2),
+            lower80 = hdi(R2, ci = .8)$CI_low,
+            upper80 = hdi(R2, ci = .8)$CI_high,
+            lower95 = hdi(R2, ci = .95)$CI_low,
+            upper95 = hdi(R2, ci = .95)$CI_high,
+            .groups = "drop") %>% 
+  add_row(mean = NA,
+          cl_var = "All together",
+          lu_var = "none") %>%
+  mutate(cl_var = factor(cl_var, levels = c("none", "T_all", "T_seas", "P", "All together"),
+                         labels = c("No change", "Annual mean\ntemperature", "Temperature\nseasonality", 
+                                    "Summer\nprecipitation", "All together")),
+         lu_var = factor(lu_var, levels = c("none", "AgrArea_prop", "LSUGL", "IAR"),
+                         labels = c("No change", "Agricultural\narea", "Grassland-use\nintensity", "Crop-use\nintensity")))
+
+d_trend_pred_agg %>%   
+  ggplot(aes(x = cl_var, y = mean, fill = lu_var)) +
+  geom_point(col = NA) +
+  annotate(geom = "rect", xmin = 4.5, xmax = 5.5, ymin = -Inf, ymax = Inf,
+           fill = "grey90") +
+  annotate(geom = "segment", x = 4.5, xend = 4.5, y = -.042, 
+           yend = Inf,
+           col = "grey20") +
+  geom_col(position = position_dodge(width = .8), width = .8) +
+  geom_col(data = d_pred_actual_data,
+           fill = "#45773C", width = .8/4) +
+  geom_hline(yintercept = 0) +
+  geom_linerange(aes(ymin = lower80, ymax = upper80),
+                 position = position_dodge(width = .8), size = 1) +
+  geom_linerange(aes(ymin = lower95, ymax = upper95),
+                 position = position_dodge(width = .8), size = .5) +
+  geom_linerange(data = d_pred_actual_data, aes(ymin = lower80, ymax = upper80),
+                 size = 1) +
+  geom_linerange(data = d_pred_actual_data, aes(ymin = lower95, ymax = upper95),
+                 size = .5) +
+  scale_fill_manual(values = c("grey30", "#5158BB", "#F26DF9", "#EB4B98"),
+                    name = "Land-use change") +
+  xlab("Climate change") +
+  ylab(expression(Mean~italic(R^2))) +
+  coord_cartesian(clip = "off",
+                  ylim = c(0, max(c(d_trend_pred_agg$upper95,
+                                    d_pred_actual_data$upper95), na.rm = T))) +
+  theme(axis.title.x = element_text(hjust = 2.5 / 6.6),
+        legend.text = element_text(margin = margin(t = 5, b = 5, unit = "pt")),
+        legend.key.height = unit(30, "pt"))
+
+# Scenario predictions (for model version 3) ###################################
+################################################################################.
+
+# calculate predictions for different scenarios
+# compare predictions to observed trends through correlations
+
+l_fit <- extract(fit3, pars = c("mu_a", "b_T_all", "b_T_seas", "b_P",  
+                                "b_AgrArea_prop", "b_LSUGL", "b_IAR", 
+                                "b_Tniche", "b_spec_index", 
+                                "b_elevation",
+                                "b_T_all_Tniche", "b_T_seas_Tniche", "b_P_Tniche",
+                                "b_AgrArea_prop_spec_index", "b_LSUGL_spec_index", "b_IAR_spec_index",
+                                "b_T_all_AgrArea_prop", "b_T_seas_AgrArea_prop", "b_P_AgrArea_prop", 
+                                "b_T_all_LSUGL", "b_T_seas_LSUGL", "b_P_LSUGL",
+                                "b_T_all_IAR", "b_T_seas_IAR", "b_P_IAR",
+                                "b_Tniche_elevation", "b_spec_index_elevation", 
+                                "b_T_all_elevation", "b_T_seas_elevation", "b_P_elevation", 
+                                "b_AgrArea_prop_elevation", "b_LSUGL_elevation", "b_int",
+                                "alpha_spec_int", "alpha_reg", 
+                                "alpha_spec_s_T_all", "alpha_spec_s_T_seas",
+                                "alpha_spec_s_P", "alpha_spec_s_AgrArea_prop",
+                                "alpha_spec_s_LSUGL", "alpha_spec_s_IAR",
+                                "alpha_spec_s_T_all_AgrArea_prop", "alpha_spec_s_T_seas_AgrArea_prop",
+                                "alpha_spec_s_P_AgrArea_prop", "alpha_spec_s_T_all_LSUGL",
+                                "alpha_spec_s_T_seas_LSUGL", "alpha_spec_s_P_LSUGL",
+                                "alpha_spec_s_T_all_IAR", "alpha_spec_s_T_seas_IAR",
+                                "alpha_spec_s_P_IAR"))
 
 f_pred <- function(iter_i,
                    group, spec, reg,
@@ -2557,8 +3628,8 @@ d_trend_pred <- lapply(1:n_iter,
          lu_var = "IAR") %>% 
   bind_rows(d_trend_pred, .)
 
-# summarise and plot scenarios #################################################
-################################################################################.
+# summarise and plot scenarios -------------------------------------------------.
+# ------------------------------------------------------------------------------.
 
 d_pred_actual_data <- d_trend_pred %>% 
   filter(type == "actual data") %>% 
@@ -2622,6 +3693,8 @@ d_trend_pred_agg %>%
         legend.text = element_text(margin = margin(t = 5, b = 5, unit = "pt")),
         legend.key.height = unit(30, "pt"))
 
+
+
 # SENSITIVITY AN.: critical species ############################################
 ################################################################################.
 
@@ -2682,20 +3755,23 @@ d_trend_comb_z_rare <-
 # arrange data
 l_data_rare <- list(
   N_obs = nrow(d_trend_comb_z_rare),
+  N_obs_agrspec = nrow(d_trend_comb_z_rare[d_trend_comb_z_rare$species %in% sel_agricultural_species, ]),
   N_spec = nlevels(d_trend_comb_z_rare$species),
+  N_agrspec = n_distinct(d_trend_comb_z_rare$species[d_trend_comb_z_rare$species %in% sel_agricultural_species]),
   N_reg = nlevels(d_trend_comb_z_rare$zone),
   N_int= nlevels(d_trend_comb_z_rare$year_start_f),
   N_group = nlevels(d_trend_comb_z_rare$group),
   
   group = as.numeric(d_trend_comb_z_rare$group),
   spec = as.numeric(d_trend_comb_z_rare$species),
+  spec_agrspec = as.numeric(droplevels(d_trend_comb_z_rare$species[d_trend_comb_z_rare$species %in% sel_agricultural_species])),
   reg = as.numeric(d_trend_comb_z_rare$zone),
   
   T_all = d_trend_comb_z_rare$T_all_change_mean,
   T_seas = d_trend_comb_z_rare$T_seas_change_mean,
   P = d_trend_comb_z_rare$P_warmest_quarter_change_mean,
-  AgrArea_prop = d_trend_comb_z_rare$AgrArea_prop_change_mean,
-  LSUGL = d_trend_comb_z_rare$LSUGL_change_mean,
+  AgrArea_prop = d_trend_comb_z_rare$AgrArea_prop_change_mean[d_trend_comb_z_rare$species %in% sel_agricultural_species],
+  LSUGL = d_trend_comb_z_rare$LSUGL_change_mean[d_trend_comb_z_rare$species %in% sel_agricultural_species],
   IAR = d_trend_comb_z_rare$IAR_change_mean,
   
   Tniche = d_trend_comb_z_rare$Tniche_mean,
@@ -2704,6 +3780,8 @@ l_data_rare <- list(
   elevation = as.numeric(d_trend_comb_z_rare$elevation == "high"),
   
   year_start = model.matrix(~ year_start_f, data = d_trend_comb_z_rare)[, -1],
+  
+  index_agrspec = which(d_trend_comb_z_rare$species %in% sel_agricultural_species),
   
   y =  d_trend_comb_z_rare$trend_mean_sqrt,
   
@@ -2714,7 +3792,7 @@ l_data_rare <- list(
 
 # run model --------------------------------------------------------------------.
 set.seed(73)
-fit_rare <- stan(file = "Stan_Code/Stan_regression.stan",
+fit_rare <- stan(file = "Stan_Code/Stan_regression_restricted.stan.stan",
                  data = l_data_rare,
                  chains = 4, iter = 2000)
 
@@ -2999,20 +4077,23 @@ d_trend_comb_z_rare2 <-
 # arrange data
 l_data_rare2 <- list(
   N_obs = nrow(d_trend_comb_z_rare2),
+  N_obs_agrspec = nrow(d_trend_comb_z_rare2[d_trend_comb_z_rare2$species %in% sel_agricultural_species, ]),
   N_spec = nlevels(d_trend_comb_z_rare2$species),
+  N_agrspec = n_distinct(d_trend_comb_z_rare2$species[d_trend_comb_z_rare2$species %in% sel_agricultural_species]),
   N_reg = nlevels(d_trend_comb_z_rare2$zone),
   N_int= nlevels(d_trend_comb_z_rare2$year_start_f),
   N_group = nlevels(d_trend_comb_z_rare2$group),
   
   group = as.numeric(d_trend_comb_z_rare2$group),
   spec = as.numeric(d_trend_comb_z_rare2$species),
+  spec_agrspec = as.numeric(droplevels(d_trend_comb_z_rare2$species[d_trend_comb_z_rare2$species %in% sel_agricultural_species])),
   reg = as.numeric(d_trend_comb_z_rare2$zone),
   
   T_all = d_trend_comb_z_rare2$T_all_change_mean,
   T_seas = d_trend_comb_z_rare2$T_seas_change_mean,
   P = d_trend_comb_z_rare2$P_warmest_quarter_change_mean,
-  AgrArea_prop = d_trend_comb_z_rare2$AgrArea_prop_change_mean,
-  LSUGL = d_trend_comb_z_rare2$LSUGL_change_mean,
+  Agrare2a_prop = d_trend_comb_z_rare2$Agrare2a_prop_change_mean[d_trend_comb_z_rare2$species %in% sel_agricultural_species],
+  LSUGL = d_trend_comb_z_rare2$LSUGL_change_mean[d_trend_comb_z_rare2$species %in% sel_agricultural_species],
   IAR = d_trend_comb_z_rare2$IAR_change_mean,
   
   Tniche = d_trend_comb_z_rare2$Tniche_mean,
@@ -3021,6 +4102,8 @@ l_data_rare2 <- list(
   elevation = as.numeric(d_trend_comb_z_rare2$elevation == "high"),
   
   year_start = model.matrix(~ year_start_f, data = d_trend_comb_z_rare2)[, -1],
+  
+  index_agrspec = which(d_trend_comb_z_rare2$species %in% sel_agricultural_species),
   
   y =  d_trend_comb_z_rare2$trend_mean_sqrt,
   
@@ -3031,7 +4114,7 @@ l_data_rare2 <- list(
 
 # run model --------------------------------------------------------------------.
 set.seed(213)
-fit_rare2 <- stan(file = "Stan_Code/Stan_regression.stan",
+fit_rare2 <- stan(file = "Stan_Code/Stan_regression_restricted.stan.stan",
                   data = l_data_rare2,
                   chains = 4, iter = 2000)
 

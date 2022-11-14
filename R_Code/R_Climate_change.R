@@ -24,7 +24,7 @@ d_climate <- d_climate %>%
   mutate(date_dummy = paste(year, as.numeric(month), 1, sep = "-"),
          ndays = days_in_month(as.Date(date_dummy)))
 
-# bioclimatic regions
+# bioclimatic zones
 d_zone <- fread('Data/d_zone.csv')
 
 # records data
