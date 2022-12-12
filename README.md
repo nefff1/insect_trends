@@ -5,7 +5,7 @@ Insect occupancy trends 1980-2020 in Switzerland
 
 This repository contains code that was used in the analyses for the following publication:
 
-Neff F, Korner-Nievergelt F, Rey E, Albrecht M, Bollmann K, Cahenzli F, Chittaro YD, Gossner MM, Martínez-Núñez C, Meier ES, Monnerat C, Moretti M, Roth T, Herzog F, Knop E. **Different roles of concurring climate and regional land-use changes in past 40 years\' insect trends**.
+Neff F, Korner-Nievergelt F, Rey E, Albrecht M, Bollmann K, Cahenzli F, Chittaro Y, Gossner MM, Martínez-Núñez C, Meier ES, Monnerat C, Moretti M, Roth T, Herzog F, Knop E. 2022. **Different roles of concurring climate and regional land-use changes in past 40 years' insect trends**. Nature Communications. DOI: [10.1038/s41467-022-35223-3](https://doi.org/10.1038/s41467-022-35223-3).
 
 The following R code files are included in the folder *R_Code*:
 
